@@ -1,0 +1,24 @@
+# Python cache
+__pycache__/
+*.py[cod]
+*$py.class
+*.log
+
+# Environments
+.env
+.venv
+env/
+venv/
+.streamlit/
+.pytest_cache/
+
+# Dataset: exclude bulk generated image files (run `python src/data_generator.py` to regenerate)
+data/raw/cctv/
+data/raw/satellite/
+*.jpg
+*.jpeg
+*.png
+
+# Except keep sample images if any
+!data/sample/*.jpg
+!data/sample/*.png
