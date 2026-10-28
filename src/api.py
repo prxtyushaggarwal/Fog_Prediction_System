@@ -7,16 +7,28 @@ Serves:
 """
 
 import os
+import sys
 import io
 import json
 from typing import Optional, List
+
+# Ensure both project root and src directory are in sys.path
+CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
+PROJECT_ROOT = os.path.dirname(CURRENT_DIR)
+for p in [PROJECT_ROOT, CURRENT_DIR]:
+    if p not in sys.path:
+        sys.path.insert(0, p)
+
 from fastapi import FastAPI, UploadFile, File, HTTPException
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel, Field
 from PIL import Image
 import pandas as pd
 
-from src.predictor import FogPredictionPipeline
+try:
+    from src.predictor import FogPredictionPipeline
+except ImportError:
+    from predictor import FogPredictionPipeline
 
 app = FastAPI(
     title="Delhi NCR Fog Prediction API",

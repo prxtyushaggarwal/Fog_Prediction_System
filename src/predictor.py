@@ -13,13 +13,21 @@ import numpy as np
 import pandas as pd
 from PIL import Image
 
-from .image_processing import extract_image_features
-from .sensor_models import predict_sensor_data
+try:
+    from .image_processing import extract_image_features
+    from .sensor_models import predict_sensor_data
+except (ImportError, ValueError):
+    from image_processing import extract_image_features
+    from sensor_models import predict_sensor_data
 
 try:
     import torch
-    from .cnn_model import predict_image
-    from .lstm_model import forecast_next_24h
+    try:
+        from .cnn_model import predict_image
+        from .lstm_model import forecast_next_24h
+    except (ImportError, ValueError):
+        from cnn_model import predict_image
+        from lstm_model import forecast_next_24h
     HAS_TORCH = True
 except (ImportError, Exception):
     HAS_TORCH = False
