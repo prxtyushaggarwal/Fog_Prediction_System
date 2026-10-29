@@ -19,9 +19,14 @@ for p in [PROJECT_ROOT, CURRENT_DIR]:
     if p not in sys.path:
         sys.path.insert(0, p)
 
-from fastapi import FastAPI, UploadFile, File, HTTPException
+from fastapi import FastAPI, UploadFile, File, HTTPException, Depends
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel, Field
+
+try:
+    from src.auth import authenticate_user, create_access_token, get_current_user, ACCESS_TOKEN_MINUTES
+except ImportError:
+    from auth import authenticate_user, create_access_token, get_current_user, ACCESS_TOKEN_MINUTES
 from PIL import Image
 import pandas as pd
 
@@ -39,6 +44,11 @@ app = FastAPI(
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 MODELS_DIR = os.path.join(PROJECT_ROOT, "models")
 pipeline = FogPredictionPipeline(MODELS_DIR)
+
+class LoginInput(BaseModel):
+    username: str
+    password: str
+
 
 class SensorInput(BaseModel):
     temperature_c: float = Field(default=6.8, example=6.8)
@@ -269,13 +279,51 @@ DASHBOARD_HTML = """<!DOCTYPE html>
     Delhi NCR Fog & Smog Prediction System &bull; Powered by Random Forest, Support Vector Machines, KNN, and PyTorch Deep Learning
   </footer>
 
+  <div id="loginOverlay" class="fixed inset-0 z-[100] flex items-center justify-center bg-slate-950/95 p-4">
+    <form id="loginForm" class="w-full max-w-sm rounded-2xl border border-slate-700 bg-slate-900 p-6 shadow-xl">
+      <h2 class="mb-2 text-xl font-bold text-white">Sign in to Fog Prediction</h2>
+      <p class="mb-5 text-sm text-slate-400">Log in to run protected prediction endpoints.</p>
+      <label class="mb-1 block text-sm text-slate-300" for="loginUsername">Username</label>
+      <input id="loginUsername" autocomplete="username" required class="mb-4 w-full rounded-lg border border-slate-700 bg-slate-800 p-3 text-white" />
+      <label class="mb-1 block text-sm text-slate-300" for="loginPassword">Password</label>
+      <input id="loginPassword" type="password" autocomplete="current-password" required class="mb-3 w-full rounded-lg border border-slate-700 bg-slate-800 p-3 text-white" />
+      <p id="loginError" role="alert" class="mb-3 text-sm text-rose-400"></p>
+      <button type="submit" class="w-full rounded-lg bg-sky-600 px-4 py-3 font-semibold text-white hover:bg-sky-500">Sign in</button>
+    </form>
+  </div>
   <script>
+    let accessToken = null;
+    const loginForm = document.getElementById("loginForm");
+    loginForm.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const errorBox = document.getElementById("loginError");
+      errorBox.innerText = "";
+      try {
+        const response = await fetch("/auth/login", {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            username: document.getElementById("loginUsername").value,
+            password: document.getElementById("loginPassword").value
+          })
+        });
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.detail || "Sign-in failed");
+        accessToken = data.access_token;
+        document.getElementById("loginPassword").value = "";
+        document.getElementById("loginOverlay").classList.add("hidden");
+        recompute();
+      } catch (error) {
+        errorBox.innerText = error.message || "Unable to sign in";
+      }
+    });
+
     const sliders = ['Temp', 'Dew', 'RH', 'Wind', 'PM'];
     function updateVal(name, unit) {
       document.getElementById('val' + name).innerText = document.getElementById('slider' + name).value + ' ' + unit;
     }
 
     async function recompute() {
+      if (!accessToken) return;
       const temp = parseFloat(document.getElementById('sliderTemp').value);
       const dew = parseFloat(document.getElementById('sliderDew').value);
       const rh = parseFloat(document.getElementById('sliderRH').value);
@@ -297,7 +345,7 @@ DASHBOARD_HTML = """<!DOCTYPE html>
       try {
         const res = await fetch('/predict/sensor', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${accessToken}` },
           body: JSON.stringify({
             temperature_c: temp,
             dew_point_c: dew,
@@ -307,6 +355,12 @@ DASHBOARD_HTML = """<!DOCTYPE html>
             model_type: model
           })
         });
+        if (res.status === 401) {
+          accessToken = null;
+          document.getElementById('loginOverlay').classList.remove('hidden');
+          throw new Error('Session expired. Please sign in again.');
+        }
+        if (!res.ok) throw new Error('Prediction request failed');
         const json = await res.json();
         const r = json.result;
         const latency = Math.round(performance.now() - t0);
@@ -342,6 +396,16 @@ DASHBOARD_HTML = """<!DOCTYPE html>
 </html>
 """
 
+@app.post("/auth/login")
+def login(data: LoginInput):
+    username = authenticate_user(data.username, data.password)
+    return {
+        "access_token": create_access_token(username),
+        "token_type": "bearer",
+        "expires_in": ACCESS_TOKEN_MINUTES * 60,
+    }
+
+
 @app.get("/", response_class=HTMLResponse)
 def index_html():
     return DASHBOARD_HTML
@@ -376,7 +440,7 @@ def regional_locations():
     }
 
 @app.post("/predict/sensor")
-def predict_sensor(data: SensorInput):
+def predict_sensor(data: SensorInput, current_user: str = Depends(get_current_user)):
     try:
         readings = data.model_dump()
         model_choice = readings.pop("model_type", "Random Forest")
@@ -386,7 +450,7 @@ def predict_sensor(data: SensorInput):
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/predict/timeseries")
-def predict_timeseries(batch: TimeSeriesBatchInput):
+def predict_timeseries(batch: TimeSeriesBatchInput, current_user: str = Depends(get_current_user)):
     try:
         df = pd.DataFrame([rec.model_dump() for rec in batch.history])
         res = pipeline.forecast_from_history(df)
@@ -395,7 +459,7 @@ def predict_timeseries(batch: TimeSeriesBatchInput):
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/predict/image")
-async def predict_image_upload(file: UploadFile = File(...)):
+async def predict_image_upload(file: UploadFile = File(...), current_user: str = Depends(get_current_user)):
     try:
         contents = await file.read()
         image = Image.open(io.BytesIO(contents)).convert("RGB")
@@ -409,7 +473,7 @@ async def predict_image_upload(file: UploadFile = File(...)):
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/metrics")
-def get_benchmarks():
+def get_benchmarks(current_user: str = Depends(get_current_user)):
     metrics_path = os.path.join(MODELS_DIR, "benchmark_metrics.json")
     if os.path.exists(metrics_path):
         with open(metrics_path, "r") as f:
