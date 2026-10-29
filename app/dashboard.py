@@ -30,6 +30,35 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
+# Authentication gate for the standalone Streamlit dashboard.
+# Uses the same AUTH_USERNAME / AUTH_PASSWORD as the FastAPI login.
+from hmac import compare_digest
+
+_auth_username = os.getenv("AUTH_USERNAME")
+_auth_password = os.getenv("AUTH_PASSWORD")
+if not _auth_username or not _auth_password:
+    st.error("Authentication is not configured. Set AUTH_USERNAME and AUTH_PASSWORD before starting the dashboard.")
+    st.stop()
+
+if not st.session_state.get("authenticated", False):
+    st.title("Sign in to Fog Prediction")
+    with st.form("login_form"):
+        _username = st.text_input("Username")
+        _password = st.text_input("Password", type="password")
+        _submitted = st.form_submit_button("Sign in")
+    if _submitted:
+        if compare_digest(_username, _auth_username) and compare_digest(_password, _auth_password):
+            st.session_state["authenticated"] = True
+            st.rerun()
+        else:
+            st.error("Invalid username or password")
+    st.stop()
+
+with st.sidebar:
+    if st.button("Sign out"):
+        st.session_state.pop("authenticated", None)
+        st.rerun()
+
 # Custom CSS for Delhi portal styling
 st.markdown("""
 <style>

@@ -139,6 +139,57 @@ python -m pytest tests -p no:cacheprovider
 
 ---
 
+## 🔐 Authentication
+
+The FastAPI prediction endpoints and Streamlit dashboard now require a configured single-admin login.
+
+### Configure credentials
+
+Set these environment variables **before starting either app**:
+
+- `AUTH_USERNAME`: the login username
+- `AUTH_PASSWORD`: a long, unique password
+- `JWT_SECRET_KEY`: a random secret of at least 32 characters used to sign API access tokens
+
+Generate a secret with Python:
+
+```bash
+python -c "import secrets; print(secrets.token_urlsafe(48))"
+```
+
+On Windows PowerShell, set the variables for the current terminal (replace the example values):
+
+```powershell
+$env:AUTH_USERNAME = "admin"
+$env:AUTH_PASSWORD = "replace-with-a-long-unique-password"
+$env:JWT_SECRET_KEY = "paste-the-generated-secret-here"
+```
+
+Keep these values private; do not commit real credentials or the JWT secret. For deployment, configure them in the hosting provider's secret/environment settings. Use HTTPS in production.
+
+### Start the apps
+
+In the terminal where you set the environment variables:
+
+```bash
+uvicorn src.api:app --port 8000
+```
+
+In that same environment (or a separate terminal with the same variables set):
+
+```bash
+streamlit run app/dashboard.py
+```
+
+### API login flow
+
+1. Send `POST /auth/login` with JSON `{"username":"...","password":"..."}`.
+2. The API returns a signed JWT bearer token that expires after 30 minutes.
+3. Send `Authorization: Bearer <token>` with requests to `/predict/sensor`, `/predict/timeseries`, `/predict/image`, and `/metrics`.
+4. A missing, invalid, or expired token receives HTTP `401`.
+
+The embedded FastAPI portal displays a sign-in form and adds the token to sensor prediction requests. The Streamlit dashboard has its own sign-in gate. The public `/`, `/auth/login`, `/api`, `/regional/locations`, and API schema pages are not private data endpoints; place the service behind an HTTPS reverse proxy and restrict docs/routes at the deployment layer if those also need to be private.
+
 ## 📊 Benchmark Highlights
 
 | Model | Modality | Task | Metric | Performance |
